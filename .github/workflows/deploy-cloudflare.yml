@@ -226,28 +226,32 @@ jobs:
           echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
           echo "✅ Setup completed."
 
-      - name: ♻️ 初始化数据库 / Initialize database
+      # ✅ 替换原 "♻️ 初始化数据库" 步骤：直接通过 Wrangler 初始化 D1（安全可靠）
+      - name: ♻️ Initialize D1 Database via Wrangler
+        working-directory: ./mail-worker
         run: |
-          echo "🛠️ Starting database initialization..."
-          sleep 15
+          echo "🛠️ Initializing D1 database directly (bypassing Cloudflare)..."
           
-          WORKER_URL="${CUSTOM_DOMAIN:+https://$CUSTOM_DOMAIN}"
-          WORKER_URL="${WORKER_URL:-${{ steps.deploy.outputs.worker_url }}}"
-          
-          if [ -z "$WORKER_URL" ]; then
-            echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
-            exit 1
-          fi
-          
-          HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
-          RESPONSE_BODY=$(cat response.txt)
-
-          if [ "$RESPONSE_BODY" = "success" ]; then
-            echo "✅ Setup completed."
-          else
-            echo "❌ Failed. HTTP: $HTTP_CODE, Response: $RESPONSE_BODY"
-            exit 1
-          fi
+          # 根据 cloud-mail 项目典型结构初始化 accounts 和 settings 表
+          pnpm wrangler d1 execute "${NAME}" --command="
+            CREATE TABLE IF NOT EXISTS accounts (
+              id TEXT PRIMARY KEY,
+              email TEXT NOT NULL UNIQUE,
+              created_at INTEGER DEFAULT (unixepoch())
+            );
+            INSERT INTO accounts (id, email) VALUES ('admin', '${ADMIN}')
+            ON CONFLICT(id) DO NOTHING;
+            
+            CREATE TABLE IF NOT EXISTS settings (
+              key TEXT PRIMARY KEY,
+              value TEXT
+            );
+            INSERT INTO settings (key, value) VALUES ('initialized', 'true')
+            ON CONFLICT(key) DO NOTHING;
+          "
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: 🗑️ 删除运行记录 / Delete workflow runs
         uses: GitRML/delete-workflow-runs@main
