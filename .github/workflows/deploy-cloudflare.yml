@@ -168,7 +168,6 @@ jobs:
           if [ -n "$D1_DATABASE_ID" ]; then
             sed -i "s|\${D1_DATABASE_ID}|${D1_DATABASE_ID}|g" "$CONFIG_FILE"
             echo "✅ Using the database from environment variables."
-            echo "D1_ID=${D1_DATABASE_ID}" >> $GITHUB_ENV
             exit 0
           fi
           
@@ -196,7 +195,6 @@ jobs:
           fi
           
           sed -i "s|\${D1_DATABASE_ID}|$D1_ID|g" "$CONFIG_FILE"
-          echo "D1_ID=$D1_ID" >> $GITHUB_ENV
           echo "✅ Setup completed."
 
       - name: 🚀 开始部署 / Start deployment
@@ -224,30 +222,35 @@ jobs:
           echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
           echo "✅ Setup completed."
 
-      - name: ♻️ Initialize D1 Database via Wrangler (using UUID)
-        working-directory: ./mail-worker
+      - name: ♻️ 初始化数据库 / Initialize database
         run: |
-          echo "🛠️ Initializing D1 database using UUID: ${{ env.D1_ID }} ..."
-          
-          pnpm wrangler d1 execute --remote "${{ env.D1_ID }}" --command="
-            CREATE TABLE IF NOT EXISTS accounts (
-              id TEXT PRIMARY KEY,
-              email TEXT NOT NULL UNIQUE,
-              created_at INTEGER DEFAULT (unixepoch())
-            );
-            INSERT INTO accounts (id, email) VALUES ('admin', '${ADMIN}')
-            ON CONFLICT(id) DO NOTHING;
-            
-            CREATE TABLE IF NOT EXISTS settings (
-              key TEXT PRIMARY KEY,
-              value TEXT
-            );
-            INSERT INTO settings (key, value) VALUES ('initialized', 'true')
-            ON CONFLICT(key) DO NOTHING;
-          "
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          echo "🛠️ Starting database initialization..."
+          sleep 15
+
+          # Prefer workers.dev in CI to avoid custom-domain WAF / bot challenges.
+          INIT_BASE_URL="${{ steps.deploy.outputs.worker_url }}"
+          if [ -z "$INIT_BASE_URL" ] && [ -n "$CUSTOM_DOMAIN" ]; then
+            INIT_BASE_URL="https://$CUSTOM_DOMAIN"
+          fi
+
+          if [ -z "$INIT_BASE_URL" ]; then
+            echo "❌ No init base URL available from deploy output or CUSTOM_DOMAIN."
+            exit 1
+          fi
+
+          echo "::add-mask::$JWT_SECRET"
+          INIT_URL="${INIT_BASE_URL%/}/api/init/${JWT_SECRET}"
+
+          HTTP_CODE=$(curl -sS -L --retry 5 --retry-all-errors --retry-delay 3 \
+            -w "%{http_code}" -o response.txt "$INIT_URL")
+          RESPONSE_BODY=$(cat response.txt)
+
+          if [ "$HTTP_CODE" = "200" ] && [ "$RESPONSE_BODY" = "success" ]; then
+            echo "✅ Setup completed."
+          else
+            echo "❌ Failed. HTTP: $HTTP_CODE, Response: $RESPONSE_BODY"
+            exit 1
+          fi
 
       - name: 🗑️ 删除运行记录 / Delete workflow runs
         uses: GitRML/delete-workflow-runs@main
