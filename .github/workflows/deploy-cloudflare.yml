@@ -33,7 +33,6 @@ jobs:
     outputs:
       worker_url: ${{ steps.deploy.outputs.worker_url }}
 
-
     steps:
       - name: 🚚 检出代码仓库 / Checkout repository
         uses: actions/checkout@v4
@@ -61,7 +60,6 @@ jobs:
       - name: 🛠️ 设置环境 / Set up environment
         working-directory: ./mail-worker
         run: |
-          
           echo "🔐 Starting environment setup..."
           
           if [ -z "$JWT_SECRET" ] || grep -q '[?%#/\\]' <<< "$JWT_SECRET"; then
@@ -128,7 +126,6 @@ jobs:
       - name: ⚡ 设置KV数据库 / Set up KV database
         working-directory: ./mail-worker
         run: |
-          
           CONFIG_FILE="wrangler-action.toml"
           
           if [ -n "$KV_NAMESPACE_ID" ]; then
@@ -166,12 +163,12 @@ jobs:
       - name: 🐬 设置D1数据库 / Set up D1 database
         working-directory: ./mail-worker
         run: |
-          
           CONFIG_FILE="wrangler-action.toml"
           
           if [ -n "$D1_DATABASE_ID" ]; then
             sed -i "s|\${D1_DATABASE_ID}|${D1_DATABASE_ID}|g" "$CONFIG_FILE"
             echo "✅ Using the database from environment variables."
+            echo "D1_ID=${D1_DATABASE_ID}" >> $GITHUB_ENV
             exit 0
           fi
           
@@ -199,6 +196,7 @@ jobs:
           fi
           
           sed -i "s|\${D1_DATABASE_ID}|$D1_ID|g" "$CONFIG_FILE"
+          echo "D1_ID=$D1_ID" >> $GITHUB_ENV
           echo "✅ Setup completed."
 
       - name: 🚀 开始部署 / Start deployment
@@ -226,14 +224,12 @@ jobs:
           echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
           echo "✅ Setup completed."
 
-      # ✅ 替换原 "♻️ 初始化数据库" 步骤：直接通过 Wrangler 初始化 D1（安全可靠）
-      - name: ♻️ Initialize D1 Database via Wrangler
+      - name: ♻️ Initialize D1 Database via Wrangler (using UUID)
         working-directory: ./mail-worker
         run: |
-          echo "🛠️ Initializing D1 database directly (bypassing Cloudflare)..."
+          echo "🛠️ Initializing D1 database using UUID: ${{ env.D1_ID }} ..."
           
-          # 根据 cloud-mail 项目典型结构初始化 accounts 和 settings 表
-          pnpm wrangler d1 execute "${NAME}" --command="
+          pnpm wrangler d1 execute --remote "${{ env.D1_ID }}" --command="
             CREATE TABLE IF NOT EXISTS accounts (
               id TEXT PRIMARY KEY,
               email TEXT NOT NULL UNIQUE,
